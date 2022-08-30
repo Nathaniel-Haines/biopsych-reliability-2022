@@ -2,7 +2,7 @@
 
 ## R libraries
 
-This repository was developed under `R 4.1.0`. `renv` is used as a packages manager. To run the notebook yourself, open the `*.Rproj` project file in a new instance of `R/Rstudio`. Upon opening the project, `renv` should automatically download the required `R` libraries.
+This repository was developed under `R 4.1.0`. `renv` is used as a package manager. To run the notebook yourself, open the `*.Rproj` project file in a new instance of `R/Rstudio`. Upon opening the project, `renv` should automatically download the required `R` libraries.
 
 ## cmdstan
 
