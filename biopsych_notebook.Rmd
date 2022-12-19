@@ -1,5 +1,5 @@
 ---
-title: "BioPsych 2022 Companion Notebook"
+title: "biopsych_special_issue"
 author: "Nathaniel Haines"
 date: "4/24/2022"
 output: html_document
@@ -70,7 +70,7 @@ get_ordered_draws <- function(fit, par, ordering) {
 
 ### Learning and Choice Rules
 ```{r}
-# Delta learning rule (outcome = x_[i,t,B] in paper)
+# Delta learning rule (outcome = R_[i,t,B] in paper)
 learning_rule <- function(outcome, V, alpha) {
   E <- outcome - V
   V <- V + alpha * E
@@ -91,13 +91,19 @@ choice_rule <- function(V) {
 ### Simulating Behavioral Data
 
 ```{r}
+set.seed(43215)
+
 # Task parameters
 n_trials <- 100
-win_pr <- c(.8,.5)
+task_mu <- c(0,0)
+task_mu_base <- c(0,0)
+task_sd <- c(.3,.3) 
+task_drift_sd <- .1 
+task_gamma <- .99 
 
 # Model parameters
 V <- c(0,0)
-alpha <- .1
+alpha <- .2
 xi <- 1
 
 sim_behav <- foreach(t=1:n_trials, .combine = "rbind") %do% {
@@ -105,16 +111,22 @@ sim_behav <- foreach(t=1:n_trials, .combine = "rbind") %do% {
   PR_choice <- choice_rule(V * xi)
   choice <- sample(c(1,2), 1, prob=PR_choice)
   
-  outcome <- sample(c(0,1), 1, prob=c(1-win_pr[choice], win_pr[choice]))
+  outcome <- rnorm(1, task_mu[choice], task_sd[choice])
   
   learn <- learning_rule(outcome, V[choice], alpha)
   V[choice] <- learn["V"]
   
+  task_mu_prev <- task_mu
+  task_mu <- task_mu * task_gamma + rnorm(2, 0, task_drift_sd)
+  
   data.frame(trial = t, 
              choice = choice, 
              outcome = outcome, 
+             mu_1 = task_mu_prev[1],
+             mu_2 = task_mu_prev[2],
              V_1 = V[1],
              V_2 = V[2],
+             V = V[choice]-V[3-choice],
              PR_1 = PR_choice[1],
              PR_2 = PR_choice[2],
              E = learn["E"])
@@ -122,17 +134,17 @@ sim_behav <- foreach(t=1:n_trials, .combine = "rbind") %do% {
 
 choice_value <- sim_behav %>%
   ggplot(aes(x = trial)) +
+  geom_line(aes(y = mu_1), color = reds[2], alpha = .3, size=2) +
+  geom_line(aes(y = mu_2), color = "darkgray", alpha = .3, size=2) +
   geom_line(aes(y = V_1), color = reds[2]) +
   geom_line(aes(y = V_2), color = "darkgray") +
-  geom_hline(yintercept = .8, linetype = 2, color = reds[2]) +
-  geom_hline(yintercept = .5, linetype = 2, color = "darkgray") +
   geom_point(aes(x = trial - 1, y = lag(V_1), alpha = ifelse(choice==1 & E > 0, 1, 0)), color = reds[2]) +
   geom_point(aes(x = trial - 1, y = lag(V_2), alpha = ifelse(choice==2 & E > 0, 1, 0)), color = "darkgray") +
   scale_x_continuous(breaks = seq(0,100,10)) +
-  scale_y_continuous(breaks = seq(0,1,.1), limits = c(0,1)) +
+  scale_y_continuous(breaks = seq(-1.5,1,.5), limits = c(-1.5,1)) +
   scale_alpha_continuous(range = c(0,1)) +
-  geom_text(x = 40, y = .91, label="Option 1", color = reds[2]) +
-  geom_text(x = 60, y = .4, label="Option 2", color = "darkgray") +
+  geom_text(x = 10, y = .4, label="Option 1", color = reds[2]) +
+  geom_text(x = 60, y = .55, label="Option 2", color = "darkgray") +
   xlab("Trial") +
   ylab("Expected Value (V)") +
   theme_minimal(base_size = 15) +
@@ -144,8 +156,8 @@ choice_prob <- sim_behav %>%
   geom_hline(yintercept = .5, linetype = 2, color = "gray") +
   geom_line(aes(y = PR_1), color = reds[2]) +
   geom_line(aes(y = PR_2), color = "darkgray") +
-  geom_text(x = 40, y = .67, label="Option 1", color = reds[2]) +
-  geom_text(x = 60, y = .32, label="Option 2", color = "darkgray") +
+  geom_text(x = 48, y = .78, label="Option 1", color = reds[2]) +
+  geom_text(x = 58, y = .32, label="Option 2", color = "darkgray") +
   scale_x_continuous(breaks = seq(0,100,10)) +
   scale_y_continuous(breaks = seq(0,1,.1)) +
   coord_cartesian(ylim=c(0,1)) +
@@ -261,14 +273,14 @@ data {
   int N_trials;
   int N_record;
   array[N,N_trials] int y_behav;
-  array[N,N_trials] int outcome; 
+  array[N,N_trials] real outcome; 
   array[N] vector[N_record] y_neural;
   array[N] matrix[N_trials,N_record] X; 
 }
 
 parameters {
   // Behavioral model parameters
-  vector[N] alpha_pr; 
+  vector[N] alpha_pr;
   
   // Neural model parameters
   vector<lower=0>[N] sigma_neural;
@@ -307,6 +319,7 @@ model {
       y_behav[i,t] ~ categorical_logit(V);
       E = outcome[i,t] - V[y_behav[i,t]];
       E_vector[i,t] = E;
+      //E_vector[i,t] = V[y_behav[i,t]]-V[3-y_behav[i,t]];
       V[y_behav[i,t]] = V[y_behav[i,t]] + alpha[i] * E;
     }
     
@@ -334,6 +347,7 @@ generated quantities {
       for (t in 1:N_trials) {
         E = outcome[i,t] - V[y_behav[i,t]];
         E_vector[i,t] = E;
+        //E_vector[i,t] = V[y_behav[i,t]]-V[3-y_behav[i,t]];
         V[y_behav[i,t]] = V[y_behav[i,t]] + alpha[i] * E;
       }
       beta[i] = (E_vector[i] * beta_E[i]) + sigma_beta[i] * beta_pr[i];
@@ -352,7 +366,7 @@ generated quantities {
 
 ```{r}
 # static model parameters
-sigma_beta <- 0
+sigma_beta <- 0 # 0 implies true brain-behavior r = 1
 beta_E <- 1
 betas <- rnorm(n_trials, sim_behav$E*beta_E, sigma_beta)
 
@@ -361,7 +375,7 @@ sigma_neural <- seq(0, 1, length.out = 15)
 
 # number of simulations to average over for smoother intervals
 # increase to 150 to match paper, although this takes a long time!
-n_iters <- 10
+n_iters <- 1
 
 # stan data list
 stan_dat <- list(
@@ -376,11 +390,12 @@ stan_dat <- list(
 sim_error_generative <- foreach(i=1:n_iters, .combine = "rbind") %do% {
   foreach(sig=sigma_neural, .combine = "rbind") %do% {
     # y_neural depends on current value for sigma_neural
+    betas <- rnorm(n_trials, sim_behav$E*beta_E, sigma_beta)
     stan_dat$y_neural <- matrix(
-      rnorm(length(ts_measure), (sim_behav$E)%*%design_matrix, sig), 
+      rnorm(length(ts_measure), betas%*%design_matrix, sig),
       nrow = 1
     )
-    
+
     fit <- generative_model$sample(
       data = stan_dat,
       iter_sampling = 200,
@@ -389,11 +404,11 @@ sim_error_generative <- foreach(i=1:n_iters, .combine = "rbind") %do% {
       parallel_chains = 8,
       refresh = 0,
     )
-    
+
     R <- get_draws(fit, "R")[,1]
-    
+
     data.frame(
-      iter = i, 
+      iter = i,
       sigma_neural = sig,
       R_mean = mean(R),
       R_lower = HDIofMCMC(R)[1],
@@ -402,12 +417,12 @@ sim_error_generative <- foreach(i=1:n_iters, .combine = "rbind") %do% {
   }
 }
 
-error_plot_generative <- sim_error_generative %>% 
+error_plot_generative <- sim_error_generative %>%
   group_by(sigma_neural) %>%
   summarize_all(mean) %>%
-  ggplot(aes(x = sigma_neural, y = R_mean)) + 
+  ggplot(aes(x = sigma_neural, y = R_mean)) +
   geom_line(color = "#B97C7C") +
-  geom_ribbon(aes(ymin = R_lower, ymax = R_upper), alpha = .2, fill = reds[2]) + 
+  geom_ribbon(aes(ymin = R_lower, ymax = R_upper), alpha = .2, fill = reds[2]) +
   geom_hline(yintercept = 1, linetype = 2) +
   scale_x_continuous(breaks = seq(0, 1, .1)) +
   scale_y_continuous(breaks = seq(-1, 1, .1)) +
@@ -416,7 +431,7 @@ error_plot_generative <- sim_error_generative %>%
   theme_minimal(base_size = 15) +
   theme(panel.grid = element_blank(),
         legend.position = "none")
-error_plot_joint
+error_plot_generative
 ```
 
 #### Post-hoc Model
@@ -429,7 +444,7 @@ data {
   int N_trials;
   int N_record;
   array[N,N_trials] int y_behav;
-  array[N,N_trials] int outcome; 
+  array[N,N_trials] real outcome; 
   array[N] vector[N_record] y_neural;
   array[N] matrix[N_trials,N_record] X; 
 }
@@ -478,6 +493,7 @@ model {
       y_behav[i,t] ~ categorical_logit(V);
       E = outcome[i,t] - V[y_behav[i,t]];
       E_vector[i,t] = E;
+      //E_vector[i,t] = V[y_behav[i,t]]-V[3-y_behav[i,t]];
       V[y_behav[i,t]] = V[y_behav[i,t]] + alpha[i] * E;
     }
     
@@ -501,6 +517,7 @@ generated quantities {
       for (t in 1:N_trials) {
         E = outcome[i,t] - V[y_behav[i,t]];
         E_vector[i,t] = E;
+        //E_vector[i,t] = V[y_behav[i,t]]-V[3-y_behav[i,t]];
         V[y_behav[i,t]] = V[y_behav[i,t]] + alpha[i] * E;
       }
     }
@@ -516,12 +533,13 @@ generated quantities {
 
 # number of simulations (needs fewer than generative model for stability)
 # increase to 30 to match paper
-n_iters <- 10
+n_iters <- 1
 
 sim_error_posthoc <- foreach(i=1:n_iters, .combine = "rbind") %do% {
   foreach(sig=sigma_neural, .combine = "rbind") %do% {
+    betas <- rnorm(n_trials, sim_behav$E*beta_E, sigma_beta)
     stan_dat$y_neural <- matrix(
-      rnorm(length(ts_measure), (sim_behav$E)%*%design_matrix, sig), 
+      rnorm(length(ts_measure), betas%*%design_matrix, sig), 
       nrow = 1
     )
     
@@ -548,7 +566,119 @@ sim_error_posthoc <- foreach(i=1:n_iters, .combine = "rbind") %do% {
   }
 }
 
-error_plot_posthoc <- sim_error_posthoc %>% 
+error_plot_posthoc <- sim_error_posthoc %>%
+  group_by(sigma_neural) %>%
+  summarize_all(mean) %>%
+  ggplot(aes(x = sigma_neural, y = R_mean)) +
+  geom_line(color = "darkgray") +
+  geom_ribbon(aes(ymin = R_lower, ymax = R_upper), alpha = .2, fill = "gray") +
+  geom_hline(yintercept = 1, linetype = 2) +
+  scale_x_continuous(breaks = seq(0, 1, .1)) +
+  scale_y_continuous(breaks = seq(-1, 1, .1)) +
+  xlab(expression(sigma["neural"])) +
+  ylab("Brain-Behavior Correlation") +
+  theme_minimal(base_size = 15) +
+  theme(panel.grid = element_blank(),
+        legend.position = "none")
+error_plot_posthoc
+```
+
+#### Sequential Model
+
+##### Stan Model
+
+```{cmdstan output.var="sequential_model"}
+data {
+  int N; 
+  int N_trials;
+  int N_record;
+  array[N] row_vector[N_trials] E_hat;
+  array[N] vector[N_record] y_neural;
+  array[N] matrix[N_trials,N_record] X; 
+}
+
+parameters {
+  // Neural model parameters
+  vector[N] beta_E;
+  vector<lower=0>[N] sigma_neural;
+  vector<lower=0>[N] sigma_beta;
+  array[N] row_vector[N_trials] beta_pr;
+}
+
+model {
+  array[N] row_vector[N_trials] beta;
+  
+  // Neural model
+  sigma_neural ~ normal(.5,1);
+  sigma_beta ~ normal(1,1);
+  beta_E ~ normal(0,2);
+  
+  for (i in 1:N) {
+    // point-estimates of prediction errors as input (non-centered parameterization)
+    beta_pr[i] ~ normal(0,1);
+    beta[i] = (beta_E[i]*E_hat[i]) + sigma_beta[i] * beta_pr[i];
+    
+    // Neural model
+    y_neural[i] ~ normal(beta[i] * X[i], sigma_neural[i]);
+  }
+}
+
+generated quantities {
+  vector[N] R;
+  array[N] row_vector[N_trials] beta;
+  
+  for (i in 1:N) {
+    beta[i] = (beta_E[i]*E_hat[i]) + sigma_beta[i] * beta_pr[i];
+    
+    // convert regression weight to correlation
+    R[i] = beta_E[i] / (sd(beta[i])/sd(E_hat[i]));
+  }
+}
+
+```
+
+##### Simulation Procedure
+
+```{r}
+# static model parameters already set above
+
+# E_hat as estimated from the behavior-only model (in post-hoc above)
+stan_dat$E_hat <- matrix(E, nrow = 1)
+
+# number of simulations (needs fewer than generative model for stability)
+# increase to 30 to match paper
+n_iters <- 1
+
+sim_error_sequential <- foreach(i=1:n_iters, .combine = "rbind") %do% {
+  foreach(sig=sigma_neural, .combine = "rbind") %do% {
+    betas <- rnorm(n_trials, sim_behav$E*beta_E, sigma_beta)
+    stan_dat$y_neural <- matrix(
+      rnorm(length(ts_measure), betas%*%design_matrix, sig), 
+      nrow = 1
+    )
+    
+    fit <- sequential_model$sample(
+      data = stan_dat,
+      iter_sampling = 200,
+      iter_warmup = 100,
+      chains = 8,
+      parallel_chains = 8,
+      refresh = 0,
+    )
+    
+    R <- get_draws(fit, "R")[,1]
+    
+    data.frame(
+      iter = i, 
+      sigma_neural = sig,
+      R_mean = mean(R),
+      R_lower = HDIofMCMC(R)[1],
+      R_upper = HDIofMCMC(R)[2]
+    )
+  }
+}
+
+error_plot_sequential <- sim_error_sequential %>% 
   group_by(sigma_neural) %>%
   summarize_all(mean) %>%
   ggplot(aes(x = sigma_neural, y = R_mean)) + 
@@ -562,7 +692,7 @@ error_plot_posthoc <- sim_error_posthoc %>%
   theme_minimal(base_size = 15) +
   theme(panel.grid = element_blank(),
         legend.position = "none")
-error_plot_posthoc
+error_plot_sequential
 ```
 
 
@@ -573,10 +703,17 @@ summary_posthoc <- sim_error_posthoc %>%
   group_by(sigma_neural) %>%
   summarize_all(mean)
 
+summary_sequential <- sim_error_sequential %>% 
+  group_by(sigma_neural) %>%
+  summarize_all(mean)
+
 error_plot_generative + 
-  geom_line(aes(x = sigma_neural, y = R), data = summary_posthoc, color = "darkgray") +
+  geom_line(aes(x = sigma_neural, y = R_mean), data = summary_posthoc, color = "darkgray") +
   geom_ribbon(aes(ymin = R_lower, ymax = R_upper), data = summary_posthoc, alpha = .5, fill = "gray") +
-  geom_text(x = .8, y = .7, label="Generative", color = reds[1], size = 5) +
-  geom_text(x = .3, y = 0, label="Post-hoc", color = "darkgray", size = 5)
+  geom_line(aes(x = sigma_neural, y = R_mean), data = summary_sequential, color = blues[1]) +
+  geom_ribbon(aes(ymin = R_lower, ymax = R_upper), data = summary_sequential, alpha = .4, fill = blues[2]) +
+  geom_text(x = .35, y = -.1, label="Generative", color = reds[1], size = 5) +
+  geom_text(x = .55, y = -.32, label="Sequential", color = blues[1], size = 5) +
+  geom_text(x = .15, y = .1, label="Post-hoc", color = "darkgray", size = 5)
 ```
 
