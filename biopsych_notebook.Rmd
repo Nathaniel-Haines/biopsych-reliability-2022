@@ -70,7 +70,7 @@ get_ordered_draws <- function(fit, par, ordering) {
 
 ### Learning and Choice Rules
 ```{r}
-# Delta learning rule (outcome = R_[i,t,B] in paper)
+# Delta learning rule (outcome = R_[i,t]; E = PE_[i,t] in paper)
 learning_rule <- function(outcome, V, alpha) {
   E <- outcome - V
   V <- V + alpha * E
@@ -107,7 +107,7 @@ alpha <- .2
 xi <- 1
 
 sim_behav <- foreach(t=1:n_trials, .combine = "rbind") %do% {
-  # choice = y_[i,t,B] in paper
+  # choice = y_[i,t] in paper
   PR_choice <- choice_rule(V * xi)
   choice <- sample(c(1,2), 1, prob=PR_choice)
   
